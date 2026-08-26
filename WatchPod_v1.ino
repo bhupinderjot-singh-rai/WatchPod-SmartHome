@@ -98,7 +98,8 @@ unsigned long lastWindowShift = 0;
 
 unsigned long emptyRoomSince = 0;
 
-
+unsigned long lastWifiRetry = 0;
+const unsigned long WIFI_RETRY_INTERVAL = 30000;
 // Energy Saver alert states
 bool softAlertSent = false;
 
@@ -115,6 +116,32 @@ UniversalTelegramBot bot(
   TELEGRAM_BOT_TOKEN,
   client
 );
+
+
+// ==========================================
+// WIFI RECONNECT
+// ==========================================
+
+void maintainWiFi() {
+
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  if (millis() - lastWifiRetry >= WIFI_RETRY_INTERVAL) {
+
+    lastWifiRetry = millis();
+
+    Serial.println(
+      "[WIFI] Connection lost. Retrying..."
+    );
+
+    WiFi.begin(
+      WIFI_SSID,
+      WIFI_PASSWORD
+    );
+  }
+}
 
 
 // ==========================================
@@ -751,6 +778,7 @@ void setup() {
 // ==========================================
 
 void loop() {
+  maintainWiFi();
 
 
   int pirValue =
