@@ -30,469 +30,335 @@ Commands for BotFather:
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
 #include <time.h>
-#include <Preferences.h> 
 
-// =================================================
-// WIFI SETTINGS (Apni details yahan dalein)
-// =================================================
-const char* WIFI_SSID = "YOUR_WIFI_NAME";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// ==========================================
+// 1. NETWORK & TELEGRAM CREDENTIALS
+// ==========================================
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+#define BOTtoken "YOUR_TELEGRAM_BOT_TOKEN"
+#define CHAT_ID "YOUR_TELEGRAM_CHAT_ID"
 
-// =================================================
-// TELEGRAM SETTINGS (Apni details yahan dalein)
-// =================================================
-#define BOT_TOKEN "YOUR_BOT_TOKEN"
-#define CHAT_ID "YOUR_CHAT_ID"
+// ==========================================
+// 2. HARDWARE PIN DEFINITIONS
+// ==========================================
+const int PIR_PIN = 32;   // Digital input from HC-SR501
+const int LDR_PIN = 34;   // Analog input from LDR module
+const int LED_PIN = 15;   // Visual status / motion feedback LED
 
-// =================================================
-// PIN SETTINGS
-// =================================================
-#define PIR_PIN 32
-#define LDR_PIN 34
-#define LED_PIN 15
+// ==========================================
+// 3. SYSTEM CONSTANTS & THRESHOLDS
+// ==========================================
+const int LIGHT_THRESHOLD = 1000;             // Below 1000 = Light ON
+const unsigned long BOT_MTBS = 1000;           // Mean time between Telegram scans (1s)
+const unsigned long WINDOW_INTERVAL = 30000;   // 30 seconds per slice (Total 5 mins = 10 slices)
+const unsigned long SOFT_ALERT_TIME = 120000;  // 2 minutes empty room timer
+const unsigned long HARD_ALERT_TIME = 600000;  // 10 minutes empty room timer
 
-// =================================================
-// LIGHT SETTINGS
-// =================================================
-const int LIGHT_THRESHOLD = 1000; 
-
-// =================================================
-// TIME SETTINGS (IST UTC +5:30)
-// =================================================
-const long GMT_OFFSET_SEC = 19800;
-const int DAYLIGHT_OFFSET_SEC = 0;
-
-// =================================================
-// ACTIVITY SCORE & TIMERS
-// =================================================
-const int MAX_PIR_EVENTS = 10; 
-unsigned long pir_events[MAX_PIR_EVENTS];
-int pir_event_index = 0;
-const unsigned long ACTIVITY_WINDOW = 300000; // 5 minutes window
-
-const unsigned long EMPTY_SOFT_WARNING_TIME = 120000; // 2 mins (Light ON, No Motion)
-const unsigned long EMPTY_REMINDER_TIME = 600000;     // 10 mins (Light ON, No Motion)
-
-const unsigned long TELEGRAM_CHECK_INTERVAL = 1000;
-const unsigned long WIFI_CHECK_INTERVAL = 10000;
-const unsigned long TIME_SYNC_INTERVAL = 3600000;
-const unsigned long SERIAL_INTERVAL = 2000;
-
-// =================================================
-// SYSTEM OBJECTS
-// =================================================
-WiFiClientSecure secured_client;
-UniversalTelegramBot bot(BOT_TOKEN, secured_client);
-Preferences preferences; 
-
-enum SystemMode {
-  MODE_VACATION, // 24/7 Manual Security
-  MODE_ENERGY    // Smart Bedroom Energy Saver (Default)
+// ==========================================
+// 4. STATE VARIABLES
+// ==========================================
+enum SystemMode { 
+  ENERGY_SAVER, 
+  VACATION 
 };
-SystemMode currentMode = MODE_ENERGY;
 
-// =================================================
-// VARIABLES
-// =================================================
-unsigned long lastMotionTime = 0;
-unsigned long lastBotCheck = 0;
-unsigned long lastWiFiCheck = 0;
-unsigned long lastTimeSync = 0;
-unsigned long lastSerial = 0;
+SystemMode currentMode = ENERGY_SAVER;
+String currentLanguage = "EN"; // Supported: EN, HI, PA
 
-bool motionAlertSent = false;
-bool softWarningSent = false;
-bool reminderAlertSent = false;
-int previousPirState = LOW;
+int windowPIR[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+int windowIndex = 0;
+int activityScore = 0;
 
-String currentLanguage = "EN"; 
+unsigned long lastBotScan = 0;
+unsigned long lastWindowShift = 0;
+unsigned long emptyRoomSince = 0;
 
-// =================================================
-// NVS MEMORY FUNCTIONS
-// =================================================
-void saveModeToNVS(SystemMode mode) {
-  preferences.begin("watchpod", false);
-  preferences.putInt("mode", (int)mode);
-  preferences.end();
-  Serial.print("Saved Mode to NVS: ");
-  Serial.println((int)mode);
+bool softAlertSent = false;
+bool hardAlertSent = false;
+
+WiFiClientSecure client;
+UniversalTelegramBot bot(BOTtoken, client);
+Preferences preferences;
+
+// ==========================================
+// 5. HELPER FUNCTIONS
+// ==========================================
+
+// Multi-language string selector
+String getMsg(String en, String hi, String pa) {
+  if (currentLanguage == "HI") return hi;
+  if (currentLanguage == "PA") return pa;
+  return en;
 }
 
-void loadModeFromNVS() {
-  preferences.begin("watchpod", true);
-  int storedMode = preferences.getInt("mode", (int)MODE_ENERGY);
-  currentMode = (SystemMode)storedMode;
-  preferences.end();
-  Serial.print("Loaded Mode from NVS: ");
-  Serial.println(storedMode);
-}
-
-// =================================================
-// ACTIVITY SCORE LOGIC
-// =================================================
-void updateActivityLog() {
-  unsigned long now = millis();
-  pir_events[pir_event_index] = now;
-  pir_event_index = (pir_event_index + 1) % MAX_PIR_EVENTS;
-}
-
-int getActivityScore() {
-  int count = 0;
-  unsigned long now = millis();
-  for (int i = 0; i < MAX_PIR_EVENTS; i++) {
-    if (pir_events[i] > 0 && (now - pir_events[i] < ACTIVITY_WINDOW)) {
-      count++;
-    }
-  }
-  return count;
-}
-
-// =================================================
-// WIFI & TIME SETUP
-// =================================================
-void connectWiFi() {
-  Serial.println("Connecting to WiFi...");
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500); 
-    Serial.print("."); 
-    attempts++;
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi Connected. IP: " + WiFi.localIP().toString());
-  } else {
-    Serial.println("WiFi connection failed. Will retry.");
-  }
-}
-
-void setupTime() {
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("Syncing time IST...");
-    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, "pool.ntp.org", "time.nist.gov");
-    struct tm timeinfo;
-    if (getLocalTime(&timeinfo, 10000)) {
-      Serial.println("Time synchronized.");
-      lastTimeSync = millis();
-    } else {
-      Serial.println("Time sync failed.");
-    }
-  }
-}
-
-String getCurrentTimeString() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "TIME NOT SYNCED YET";
-  char buffer[30];
-  strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &timeinfo);
-  return String(buffer);
-}
-
+// Telegram message dispatcher
 void sendTelegram(String message) {
-  if (WiFi.status() == WL_CONNECTED) {
-    bot.sendMessage(CHAT_ID, message, "");
+  bot.sendMessage(CHAT_ID, message, "");
+}
+
+// Formatted IST time generator
+String getFormattedTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return "Time Sync Error";
   }
+  char timeStringBuff[50];
+  strftime(timeStringBuff, sizeof(timeStringBuff), "%d-%m-%Y %H:%M:%S", &timeinfo);
+  return String(timeStringBuff);
 }
 
-void blinkLED(int times, int duration) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, HIGH); delay(duration);
-    digitalWrite(LED_PIN, LOW); delay(duration);
+// Sliding window sum calculator (0 to 10)
+void updateActivityScore() {
+  int sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += windowPIR[i];
   }
+  activityScore = sum;
+  Serial.print("[SYSTEM] Activity Score updated: ");
+  Serial.print(activityScore);
+  Serial.println("/10");
 }
 
-void resetAlertStates() {
-  motionAlertSent = false;
-  softWarningSent = false;
-  reminderAlertSent = false;
-  lastMotionTime = millis();
-  previousPirState = digitalRead(PIR_PIN);
-  for (int i = 0; i < MAX_PIR_EVENTS; i++) pir_events[i] = 0;
-}
-
-// =================================================
-// MULTI-LANGUAGE SYSTEM TEXTS
-// =================================================
-String getText(String key) {
-  if (currentLanguage == "EN") {
-    if (key == "ONLINE") return "WATCHPOD ONLINE\n===\nPrimary: Energy Saver (Active)\nVacation: Optional/Manual\nUse /help";
-    if (key == "VACATION") return "VACATION MODE (Security ARMED)\n===\n24/7 Intrusion alerts active. House is empty.";
-    if (key == "ENERGY") return "ENERGY SAVER MODE (Default Active)\n===\nMonitoring Lights & Motion context.\nSuppresses alerts during sleep.";
-    if (key == "MOTION_ALERT") return "WATCHPOD SECURITY ALERT\n===\nMOTION DETECTED!\nCheck for intrusions immediately.";
-    if (key == "SOFT_WARNING") return "WATCHPOD ENERGY WARN\n===\nLIGHT IS ON.\nNO MOTION FOR 2 MINUTES.\nRoom activity extremely low.";
-    if (key == "REMINDER_ALERT") return "WATCHPOD ENERGY REMIND\n===\nLIGHT STILL ON.\nNO MOTION FOR 10 MINUTES.\nPlease check the light.";
-    if (key == "STATUS_VACATION") return "VACATION SECURITY";
-    if (key == "STATUS_ENERGY") return "ENERGY SAVER";
-  }
-
-  if (currentLanguage == "HI") {
-    if (key == "ONLINE") return "WATCHPOD ONLINE\n===\nDefault: Energy Saver Active\nUse /help";
-    if (key == "VACATION") return "VACATION MODE (Security Active)\n===\n24/7 Intrusion alerts ARMED hain.";
-    if (key == "ENERGY") return "ENERGY SAVER MODE (Default Active)\n===\nLight aur Motion context monitor ho raha hai.";
-    if (key == "MOTION_ALERT") return "WATCHPOD SECURITY ALERT\n===\nMOTION DETECTED!\nArea check karein!";
-    if (key == "SOFT_WARNING") return "WATCHPOD ENERGY WARN\n===\nLIGHT ON HAI aur 2 min se motion nahi hai.";
-    if (key == "REMINDER_ALERT") return "WATCHPOD ENERGY REMIND\n===\nLIGHT ABHI BHI ON HAI.\n10 min se koi motion nahi.\nPlease light check karein.";
-    if (key == "STATUS_VACATION") return "VACATION SECURITY";
-    if (key == "STATUS_ENERGY") return "ENERGY SAVER";
-  }
-
-  if (currentLanguage == "PA") {
-    if (key == "ONLINE") return "WATCHPOD ONLINE\n===\nDefault: Energy Saver Active\nUse /help";
-    if (key == "VACATION") return "VACATION MODE (Security Active)\n===\n24/7 Intrusion alerts lag gaye han.";
-    if (key == "ENERGY") return "ENERGY SAVER MODE (Default Active)\n===\nRoom Context di monitoring ho rahi hai.";
-    if (key == "MOTION_ALERT") return "WATCHPOD SECURITY ALERT\n===\nMOTION DETECTED!\nArea check karo!";
-    if (key == "SOFT_WARNING") return "WATCHPOD ENERGY WARN\n===\nLIGHT ON HAI te 2 min ton motion nahi hai.";
-    if (key == "REMINDER_ALERT") return "WATCHPOD ENERGY REMIND\n===\nLIGHT HALLE VI ON HAI.\n10 min ton koi motion nahi.\nPlease light check karo.";
-    if (key == "STATUS_VACATION") return "VACATION SECURITY";
-    if (key == "STATUS_ENERGY") return "ENERGY SAVER";
-  }
-  return "";
-}
-
-String getModeName() {
-  if (currentMode == MODE_VACATION) return getText("STATUS_VACATION");
-  return getText("STATUS_ENERGY");
-}
-
-// =================================================
-// STATUS & COMMAND CENTER
-// =================================================
-void sendStatus() {
-  int pirValue = digitalRead(PIR_PIN);
-  int ldrValue = analogRead(LDR_PIN);
-  bool lightOn = (ldrValue < LIGHT_THRESHOLD);
-  int activity = getActivityScore();
-
-  String message = "WATCHPOD STATUS\n===\n";
-  message += "SYSTEM : ONLINE\n";
-  message += "MODE   : " + getModeName() + "\n\n";
-  message += "TIME   : " + getCurrentTimeString() + "\n\n";
-  
-  message += "PIR    : " + String(pirValue == HIGH ? "MOTION\n" : "CLEAR\n");
-  message += "LDR    : " + String(ldrValue) + String(lightOn ? " (LIGHT ON)\n" : " (LIGHT OFF)\n");
-  message += "ACTIVITY SCORE: " + String(activity) + "/10 (5m window)\n";
-  if (activity <= 1) message += " (Low Activity / Bed Context)\n";
-
-  sendTelegram(message);
-}
-
-void sendHelp() {
-  String message = "WATCHPOD CONTROL CENTER\n===\n"
-    "/status - Check live status & Activity Score\n\n"
-    "/energy - Smart Bedroom Energy Saver (Default)\n\n"
-    "/vacation - Manual Security (24/7 Vacation Mode)\n\n"
-    "/time - View IST time & mode info\n\n"
-    "/lang - Change Language (EN/HI/PA)";
-  sendTelegram(message);
-}
-
-void sendLanguageMenu() {
-  String message = "WATCHPOD LANGUAGE SETTINGS\n===\nSelect language:\nEnglish\nHindi\nPunjabi";
-  String keyboard = "[[\"English\",\"Hindi\"],[\"Punjabi\"]]";
-  bot.sendMessageWithReplyKeyboard(CHAT_ID, message, "", keyboard, true);
-}
-
-// =================================================
-// TELEGRAM COMMAND HANDLER
-// =================================================
-void handleTelegram() {
-  int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-  while (numNewMessages) {
-    for (int i = 0; i < numNewMessages; i++) {
-      String chat_id = bot.messages[i].chat_id;
-      String text = bot.messages[i].text;
-
-      if (chat_id != CHAT_ID) {
-        bot.sendMessage(chat_id, "Unauthorized access.", "");
-        continue;
-      }
-
-      if (text == "/start") {
-        sendTelegram(getText("ONLINE"));
-      }
-      else if (text == "/help") {
-        sendHelp();
-      }
-      else if (text == "/status") {
-        sendStatus();
-      }
-      else if (text == "/vacation" || text == "/on") {
-        currentMode = MODE_VACATION;
-        resetAlertStates();
-        saveModeToNVS(MODE_VACATION);
-        sendTelegram(getText("VACATION"));
-      }
-      else if (text == "/energy" || text == "/auto" || text == "/off") {
-        // Mapped old auto/off commands to the new smart default
-        currentMode = MODE_ENERGY;
-        resetAlertStates();
-        saveModeToNVS(MODE_ENERGY);
-        sendTelegram(getText("ENERGY"));
-      }
-      else if (text == "/time") {
-        String message = "WATCHPOD TIME SYSTEM\n===\n";
-        message += "CURRENT TIME\n" + getCurrentTimeString();
-        message += "\n\nMODE INFO:\n- Energy Saver: Active (Default)\n- Vacation Security: Manual Override";
-        sendTelegram(message);
-      }
-      else if (text == "/lang") {
-        sendLanguageMenu();
-      }
-      else if (text == "English") {
-        currentLanguage = "EN";
-        sendTelegram("Language updated to English.");
-      }
-      else if (text == "Hindi") {
-        currentLanguage = "HI";
-        sendTelegram("Language updated to Hindi.");
-      }
-      else if (text == "Punjabi") {
-        currentLanguage = "PA";
-        sendTelegram("Language updated to Punjabi.");
-      }
-      else {
-        sendTelegram("Command not recognized. Use /help");
-      }
+// ==========================================
+// 6. TELEGRAM MESSAGE HANDLER
+// ==========================================
+void handleNewMessages(int numNewMessages) {
+  for (int i = 0; i < numNewMessages; i++) {
+    String senderChatId = String(bot.messages[i].chat_id);
+    
+    // Security check: Whitelist sender
+    if (senderChatId != CHAT_ID) {
+      Serial.print("[SECURITY] Unauthorized access attempt from Chat ID: ");
+      Serial.println(senderChatId);
+      bot.sendMessage(senderChatId, "Unauthorized Access Denied.", "");
+      continue;
     }
-    numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+
+    String text = bot.messages[i].text;
+    Serial.print("[TELEGRAM] Received command: ");
+    Serial.println(text);
+
+    int currentPir = digitalRead(PIR_PIN);
+    int currentLdr = analogRead(LDR_PIN);
+
+    if (text == "/start") {
+      String welcome = getMsg(
+        "Welcome to WatchPod v1.0!\n\nCommands:\n/status - Check live system status & Activity Score\n/energy - Smart Bedroom Energy Saver (Default)\n/vacation - Manual Security Mode\n/time - View current time & active mode status\n/lang - Change language",
+        "WatchPod v1.0 mein aapka swagat hai!\n\nCommands:\n/status - Live sthiti aur Activity Score dekhein\n/energy - Smart Bedroom Energy Saver (Default)\n/vacation - Manual Security Mode\n/time - Samay aur active mode dekhein\n/lang - Bhasha badlein",
+        "WatchPod v1.0 vich tuhada swagat hai!\n\nCommands:\n/status - Live sthiti te Activity Score dekho\n/energy - Smart Bedroom Energy Saver (Default)\n/vacation - Manual Security Mode\n/time - Samaa te active mode dekho\n/lang - Bhasha badlo"
+      );
+      sendTelegram(welcome);
+    } 
+    else if (text == "/status") {
+      String ldrState = (currentLdr < LIGHT_THRESHOLD) ? "LIGHT ON" : "LIGHT OFF";
+      String pirState = (currentPir == HIGH) ? "MOTION" : "CLEAR";
+      String modeStr = (currentMode == VACATION) ? "VACATION" : "ENERGY SAVER";
+
+      String msg = "WATCHPOD STATUS\n===\n";
+      msg += "SYSTEM : ONLINE\n";
+      msg += "MODE   : " + modeStr + "\n\n";
+      msg += "TIME   : " + getFormattedTime() + "\n\n";
+      msg += "PIR    : " + pirState + "\n";
+      msg += "LDR    : " + String(currentLdr) + " (" + ldrState + ")\n";
+      msg += "ACTIVITY SCORE: " + String(activityScore) + "/10 (5m window)";
+
+      sendTelegram(msg);
+    } 
+    else if (text == "/time") {
+      String modeStr = (currentMode == VACATION) ? "VACATION" : "ENERGY SAVER";
+      String msg = getMsg(
+        "System Time: " + getFormattedTime() + "\nActive Mode: " + modeStr,
+        "System Samay: " + getFormattedTime() + "\nActive Mode: " + modeStr,
+        "System Samaa: " + getFormattedTime() + "\nActive Mode: " + modeStr
+      );
+      sendTelegram(msg);
+    }
+    else if (text == "/energy") {
+      currentMode = ENERGY_SAVER;
+      preferences.putUInt("mode", ENERGY_SAVER);
+      sendTelegram(getMsg(
+        "Mode switched to Energy Saver.", 
+        "Mode badal kar Energy Saver kar diya gaya hai.", 
+        "Mode badal ke Energy Saver kar ditta gaya hai."
+      ));
+    } 
+    else if (text == "/vacation") {
+      currentMode = VACATION;
+      preferences.putUInt("mode", VACATION);
+      sendTelegram(getMsg(
+        "Mode switched to Vacation Security.", 
+        "Mode badal kar Vacation Security kar diya gaya hai.", 
+        "Mode badal ke Vacation Security kar ditta gaya hai."
+      ));
+    } 
+    else if (text == "/lang") {
+      String keyboardJson = "[[\"English\", \"Hindi\", \"Punjabi\"]]";
+      bot.sendMessageWithReplyKeyboard(
+        CHAT_ID, 
+        "Choose Language / Bhasha chunein / Bhasha chuno:", 
+        "", 
+        keyboardJson, 
+        true
+      );
+    } 
+    else if (text == "English") {
+      currentLanguage = "EN";
+      preferences.putString("lang", "EN");
+      sendTelegram("Language updated to English.");
+    } 
+    else if (text == "Hindi") {
+      currentLanguage = "HI";
+      preferences.putString("lang", "HI");
+      sendTelegram("Bhasha badal kar Hindi kar di gayi hai.");
+    } 
+    else if (text == "Punjabi") {
+      currentLanguage = "PA";
+      preferences.putString("lang", "PA");
+      sendTelegram("Bhasha badal ke Punjabi kar ditti gayi hai.");
+    }
   }
 }
 
-// =================================================
-// SETUP
-// =================================================
+// ==========================================
+// 7. SETUP ROUTINE
+// ==========================================
 void setup() {
   Serial.begin(115200);
+  Serial.println("\n[BOOT] Initializing WatchPod Core...");
+
   pinMode(PIR_PIN, INPUT);
+  pinMode(LDR_PIN, INPUT);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  analogReadResolution(12);
-  secured_client.setInsecure();
 
-  loadModeFromNVS(); 
+  // Load persistent configurations from NVS
+  preferences.begin("watchpod", false);
+  currentMode = (SystemMode)preferences.getUInt("mode", ENERGY_SAVER);
+  currentLanguage = preferences.getString("lang", "EN");
 
-  connectWiFi();
-  setupTime();
+  Serial.println("[NVS] Loaded saved configurations:");
+  Serial.print(" - Mode: "); Serial.println((currentMode == VACATION) ? "VACATION" : "ENERGY_SAVER");
+  Serial.print(" - Language: "); Serial.println(currentLanguage);
 
-  lastMotionTime = millis();
-  previousPirState = digitalRead(PIR_PIN);
-  for (int i = 0; i < MAX_PIR_EVENTS; i++) pir_events[i] = 0;
+  // Connect to local WiFi network
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
 
-  blinkLED(2, 200);
+  Serial.print("[WIFI] Connecting to ");
+  Serial.println(ssid);
 
-  if (WiFi.status() == WL_CONNECTED) {
-    sendTelegram(getText("ONLINE"));
+  while (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(LED_PIN, !digitalRead(LED_PIN)); // Blink indicator while connecting
+    delay(500);
+    Serial.print(".");
   }
-  Serial.println("WATCHPOD READY");
+  digitalWrite(LED_PIN, LOW);
+  
+  Serial.println("\n[WIFI] Connected successfully!");
+  Serial.print("[WIFI] IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // Synchronize system time with IST (UTC +5:30 = 19800 seconds offset)
+  configTime(19800, 0, "pool.ntp.org");
+  Serial.println("[NTP] Syncing network time...");
+
+  sendTelegram(getMsg(
+    "WatchPod Online & Synced.", 
+    "WatchPod Online aur Synced hai.", 
+    "WatchPod Online te Synced hai."
+  ));
 }
 
-// =================================================
-// MAIN LOOP
-// =================================================
+// ==========================================
+// 8. MAIN EXECUTION LOOP
+// ==========================================
 void loop() {
-  unsigned long currentTime = millis();
-
-  // WiFi Check & Reconnect
-  if (currentTime - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
-    lastWiFiCheck = currentTime;
-    if (WiFi.status() != WL_CONNECTED) {
-      connectWiFi();
-      if (WiFi.status() == WL_CONNECTED) setupTime();
-    }
-  }
-
-  // Periodic Time Sync
-  if (WiFi.status() == WL_CONNECTED && (currentTime - lastTimeSync >= TIME_SYNC_INTERVAL)) {
-    setupTime();
-  }
-
-  // Telegram Check
-  if (WiFi.status() == WL_CONNECTED && (currentTime - lastBotCheck >= TELEGRAM_CHECK_INTERVAL)) {
-    handleTelegram();
-    lastBotCheck = currentTime;
-  }
-
-  // SENSOR READINGS
   int pirValue = digitalRead(PIR_PIN);
   int ldrValue = analogRead(LDR_PIN);
-  bool lightOn = (ldrValue < LIGHT_THRESHOLD);
+  bool isLightOn = (ldrValue < LIGHT_THRESHOLD);
 
-  // =================================================
-  // MOTION HANDLING
-  // =================================================
+  // Hardware motion visualization
   if (pirValue == HIGH) {
-    lastMotionTime = currentTime;
-
-    // Track rising edge for Activity Score
-    if (previousPirState == LOW) {
-      updateActivityLog();
-    }
-
-    reminderAlertSent = false;
-
-    // Vacation Security Alert 
-    if (currentMode == MODE_VACATION && !motionAlertSent) {
-      sendTelegram(getText("MOTION_ALERT"));
-      motionAlertSent = true;
-      blinkLED(2, 100);
-    }
+    windowPIR[windowIndex] = 1;
+    digitalWrite(LED_PIN, HIGH);
+  } else {
+    digitalWrite(LED_PIN, LOW);
   }
 
-  // PIR Return to LOW (Rearm Security)
-  if (pirValue == LOW && previousPirState == HIGH) {
-    motionAlertSent = false;
+  // Sliding Window: Shift index every 30 seconds
+  if (millis() - lastWindowShift > WINDOW_INTERVAL) {
+    lastWindowShift = millis();
+    windowIndex = (windowIndex + 1) % 10;
+    windowPIR[windowIndex] = 0; // Reset slice for next monitoring interval
+    updateActivityScore();
   }
-  previousPirState = pirValue;
 
-  // =================================================
-  // ENERGY SAVER LOGIC (Context-Aware)
-  // =================================================
-  if (currentMode == MODE_ENERGY) {
-    unsigned long noMotionDuration = currentTime - lastMotionTime;
-    int activity = getActivityScore();
-
-    // Empty room criteria: no motion AND activity score is extremely low (<=1)
-    bool roomContextEmpty = (noMotionDuration >= EMPTY_SOFT_WARNING_TIME && activity <= 1);
-
-    if (lightOn) {
-      // 10 Min Strong Reminder
-      if (noMotionDuration >= EMPTY_REMINDER_TIME && !reminderAlertSent && activity <= 1) {
-        sendTelegram(getText("REMINDER_ALERT"));
-        reminderAlertSent = true;
-        blinkLED(3, 150);
+  // Operational Mode Logic
+  if (currentMode == VACATION) {
+    if (pirValue == HIGH) {
+      Serial.println("[ALERT] Intrusion detected in Vacation Mode!");
+      sendTelegram(getMsg(
+        "[SECURITY ALERT] Motion detected in Vacation Mode!",
+        "[SECURITY ALERT] Vacation Mode mein halchal detect hui!",
+        "[SECURITY ALERT] Vacation Mode vich halchal detect hoyi!"
+      ));
+      delay(5000); // Debounce trigger to prevent message flood
+    }
+  } 
+  else { // ENERGY_SAVER Mode
+    if (activityScore == 0 && isLightOn) {
+      if (emptyRoomSince == 0) {
+        emptyRoomSince = millis();
+        Serial.println("[TIMER] Room empty with lights ON. Tracking timer started.");
       }
-      // 2 Min Soft Warning
-      else if (noMotionDuration >= EMPTY_SOFT_WARNING_TIME && !softWarningSent && roomContextEmpty) {
-        sendTelegram(getText("SOFT_WARNING"));
-        softWarningSent = true;
-        blinkLED(1, 300);
+
+      unsigned long emptyDuration = millis() - emptyRoomSince;
+
+      // 2-Minute Soft Reminder
+      if (emptyDuration > SOFT_ALERT_TIME && !softAlertSent) {
+        Serial.println("[ALERT] Sending 2-min Soft Reminder.");
+        sendTelegram(getMsg(
+          "[REMINDER] Room appears unoccupied, but lights are ON.",
+          "[REMINDER] Kamre mein koi nahi hai, lekin light ON hai.",
+          "[REMINDER] Kamre vich koi nahi hai, par light ON hai."
+        ));
+        softAlertSent = true;
       }
-    }
 
-    // Reset warnings if light turns off or activity resumes
-    if (!lightOn || activity > 1) {
-      softWarningSent = false;
-    }
-    if (!lightOn) {
-      reminderAlertSent = false;
+      // 10-Minute Hard Alert
+      if (emptyDuration > HARD_ALERT_TIME && !hardAlertSent) {
+        Serial.println("[ALERT] Sending 10-min Strong Alert.");
+        sendTelegram(getMsg(
+          "[ALERT] Lights have been ON in an empty room for over 10 minutes!",
+          "[ALERT] Khali kamre mein pichle 10 minute se light ON hai!",
+          "[ALERT] Khali kamre vich pichle 10 minute ton light ON hai!"
+        ));
+        hardAlertSent = true;
+      }
+    } 
+    else {
+      // Reset alert tracking when room is occupied or lights are OFF
+      if (emptyRoomSince != 0) {
+        Serial.println("[STATE] Resetting empty room timer.");
+      }
+      emptyRoomSince = 0;
+      softAlertSent = false;
+      hardAlertSent = false;
     }
   }
 
-  // =================================================
-  // SERIAL DEBUG MONITOR
-  // =================================================
-  if (currentTime - lastSerial >= SERIAL_INTERVAL) {
-    Serial.print("PIR: "); Serial.print(pirValue);
-    Serial.print(" | Activity: "); Serial.print(getActivityScore());
-    Serial.print("/10 | LDR: "); Serial.print(ldrValue);
-    Serial.print(" | Mode: ");
-    if (currentMode == MODE_VACATION) Serial.println("VACATION");
-    else Serial.println("ENERGY SAVER");
-    lastSerial = currentTime;
+  // Poll for incoming Telegram updates
+  if (millis() - lastBotScan > BOT_MTBS) {
+    int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+    while (numNewMessages) {
+      handleNewMessages(numNewMessages);
+      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+    }
+    lastBotScan = millis();
   }
-
-  delay(20);
 }
