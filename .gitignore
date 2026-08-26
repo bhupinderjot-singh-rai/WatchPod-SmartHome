@@ -16,7 +16,18 @@
 
 # Debugger Files
 *.pdb
+# WatchPod secrets / local configuration
+.env
+.env.*
+*.secret
+*.secrets
+credentials/
+secrets/
+config.local.*
 
+# Private keys / certificates
+*.pem
+*.key
 # Compiled Dynamic libraries
 *.so
 *.dylib
