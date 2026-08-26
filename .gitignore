@@ -25,6 +25,9 @@ credentials/
 secrets/
 config.local.*
 
+# Local WatchPod configuration
+config.h
+
 # Private keys / certificates
 *.pem
 *.key
