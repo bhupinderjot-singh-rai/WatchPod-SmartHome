@@ -3,8 +3,8 @@
                  WATCHPOD v1.0
           SMART BEDROOM/HOME FINAL VERSION
 
-            * Default: Energy Saver (24/7 Smart Context)
-            * Optional: Vacation Security (24/7 Override)
+            * Default: Energy Saver
+            * Optional: Vacation Security
 
 Hardware:
 PIR OUT  -> GPIO 32
@@ -19,11 +19,12 @@ LED +    -> GPIO 15 (with resistor)
 LED -    -> GND
 
 Commands:
- /status   - Check live system status & Activity Score
- /energy   - Smart Bedroom Energy Saver
- /vacation - Manual Security Mode
- /time     - View current time & active mode
- /lang     - Change language (EN/HI/PA)
+ /start
+ /status
+ /energy
+ /vacation
+ /time
+ /lang
 ====================================================
 */
 
@@ -36,26 +37,38 @@ Commands:
 
 #include "config.h"
 
+
 // ==========================================
 // 1. HARDWARE PIN DEFINITIONS
 // ==========================================
+
 const int PIR_PIN = 32;
 const int LDR_PIN = 34;
 const int LED_PIN = 15;
 
+
 // ==========================================
 // 2. SYSTEM CONSTANTS & THRESHOLDS
 // ==========================================
+
 const int LIGHT_THRESHOLD = 1000;
 
 const unsigned long BOT_MTBS = 1000;
+
 const unsigned long WINDOW_INTERVAL = 30000;
+
 const unsigned long SOFT_ALERT_TIME = 120000;
+
 const unsigned long HARD_ALERT_TIME = 600000;
+
+// Vacation Mode alert cooldown
+const unsigned long VACATION_ALERT_COOLDOWN = 30000;
+
 
 // ==========================================
 // 3. STATE VARIABLES
 // ==========================================
+
 enum SystemMode {
   ENERGY_SAVER,
   VACATION
@@ -65,20 +78,36 @@ SystemMode currentMode = ENERGY_SAVER;
 
 String currentLanguage = "EN";
 
+
 int windowPIR[10] = {
   0, 0, 0, 0, 0,
   0, 0, 0, 0, 0
 };
 
 int windowIndex = 0;
+
 int activityScore = 0;
 
+
+// Timers
 unsigned long lastBotScan = 0;
+
+unsigned long lastVacationAlert = 0;
+
 unsigned long lastWindowShift = 0;
+
 unsigned long emptyRoomSince = 0;
 
+
+// Energy Saver alert states
 bool softAlertSent = false;
+
 bool hardAlertSent = false;
+
+
+// ==========================================
+// 4. WIFI / TELEGRAM
+// ==========================================
 
 WiFiClientSecure client;
 
@@ -87,18 +116,29 @@ UniversalTelegramBot bot(
   client
 );
 
+
+// ==========================================
+// 5. PREFERENCES
+// ==========================================
+
 Preferences preferences;
 
+
 // ==========================================
-// 4. HELPER FUNCTIONS
+// 6. HELPER FUNCTIONS
 // ==========================================
 
-// Multi-language string selector
+
+// ------------------------------------------
+// Multi-language message selector
+// ------------------------------------------
+
 String getMsg(
   String en,
   String hi,
   String pa
 ) {
+
   if (currentLanguage == "HI") {
     return hi;
   }
@@ -110,8 +150,13 @@ String getMsg(
   return en;
 }
 
-// Telegram message dispatcher
+
+// ------------------------------------------
+// Send Telegram message
+// ------------------------------------------
+
 void sendTelegram(String message) {
+
   bot.sendMessage(
     TELEGRAM_CHAT_ID,
     message,
@@ -119,7 +164,11 @@ void sendTelegram(String message) {
   );
 }
 
-// Formatted IST time generator
+
+// ------------------------------------------
+// Get formatted IST time
+// ------------------------------------------
+
 String getFormattedTime() {
 
   struct tm timeinfo;
@@ -140,21 +189,23 @@ String getFormattedTime() {
   return String(timeStringBuff);
 }
 
+
 // ==========================================
-// 5. ACTIVITY SCORE
+// 7. ACTIVITY SCORE
 // ==========================================
 
-// Sliding window sum calculator
-// Score range: 0 to 10
 void updateActivityScore() {
 
   int sum = 0;
 
   for (int i = 0; i < 10; i++) {
+
     sum += windowPIR[i];
+
   }
 
   activityScore = sum;
+
 
   Serial.print(
     "[SYSTEM] Activity Score updated: "
@@ -165,19 +216,24 @@ void updateActivityScore() {
   Serial.println("/10");
 }
 
+
 // ==========================================
-// 6. TELEGRAM MESSAGE HANDLER
+// 8. TELEGRAM MESSAGE HANDLER
 // ==========================================
+
 void handleNewMessages(int numNewMessages) {
 
   for (int i = 0; i < numNewMessages; i++) {
 
+
+    // --------------------------------------
+    // SECURITY CHECK
+    // --------------------------------------
+
     String senderChatId =
       String(bot.messages[i].chat_id);
 
-    // ======================================
-    // SECURITY CHECK
-    // ======================================
+
     if (senderChatId != TELEGRAM_CHAT_ID) {
 
       Serial.print(
@@ -185,6 +241,7 @@ void handleNewMessages(int numNewMessages) {
       );
 
       Serial.println(senderChatId);
+
 
       bot.sendMessage(
         senderChatId,
@@ -195,7 +252,10 @@ void handleNewMessages(int numNewMessages) {
       continue;
     }
 
-    String text = bot.messages[i].text;
+
+    String text =
+      bot.messages[i].text;
+
 
     Serial.print(
       "[TELEGRAM] Received command: "
@@ -203,15 +263,11 @@ void handleNewMessages(int numNewMessages) {
 
     Serial.println(text);
 
-    int currentPir =
-      digitalRead(PIR_PIN);
-
-    int currentLdr =
-      analogRead(LDR_PIN);
 
     // ======================================
     // /start
     // ======================================
+
     if (text == "/start") {
 
       String welcome = getMsg(
@@ -219,69 +275,89 @@ void handleNewMessages(int numNewMessages) {
         "Welcome to WatchPod v1.0!\n\n"
         "Commands:\n"
         "/status - Check live system status & Activity Score\n"
-        "/energy - Smart Bedroom Energy Saver (Default)\n"
+        "/energy - Smart Bedroom Energy Saver\n"
         "/vacation - Manual Security Mode\n"
-        "/time - View current time & active mode status\n"
+        "/time - View current time & active mode\n"
         "/lang - Change language",
 
         "WatchPod v1.0 mein aapka swagat hai!\n\n"
         "Commands:\n"
-        "/status - Live sthiti aur Activity Score dekhein\n"
-        "/energy - Smart Bedroom Energy Saver (Default)\n"
+        "/status - Live status aur Activity Score\n"
+        "/energy - Smart Bedroom Energy Saver\n"
         "/vacation - Manual Security Mode\n"
-        "/time - Samay aur active mode dekhein\n"
+        "/time - Samay aur active mode\n"
         "/lang - Bhasha badlein",
 
         "WatchPod v1.0 vich tuhada swagat hai!\n\n"
         "Commands:\n"
-        "/status - Live sthiti te Activity Score dekho\n"
-        "/energy - Smart Bedroom Energy Saver (Default)\n"
+        "/status - Live status te Activity Score\n"
+        "/energy - Smart Bedroom Energy Saver\n"
         "/vacation - Manual Security Mode\n"
-        "/time - Samaa te active mode dekho\n"
+        "/time - Samaa te active mode\n"
         "/lang - Bhasha badlo"
       );
+
 
       sendTelegram(welcome);
     }
 
+
     // ======================================
     // /status
     // ======================================
+
     else if (text == "/status") {
+
+      int currentPir =
+        digitalRead(PIR_PIN);
+
+      int currentLdr =
+        analogRead(LDR_PIN);
+
 
       String ldrState =
         (currentLdr < LIGHT_THRESHOLD)
         ? "LIGHT ON"
         : "LIGHT OFF";
 
+
       String pirState =
         (currentPir == HIGH)
         ? "MOTION"
         : "CLEAR";
+
 
       String modeStr =
         (currentMode == VACATION)
         ? "VACATION"
         : "ENERGY SAVER";
 
+
       String msg =
         "WATCHPOD STATUS\n===\n";
+
 
       msg +=
         "SYSTEM : ONLINE\n";
 
+
       msg +=
-        "MODE   : " + modeStr + "\n\n";
+        "MODE   : " +
+        modeStr +
+        "\n\n";
+
 
       msg +=
         "TIME   : " +
         getFormattedTime() +
         "\n\n";
 
+
       msg +=
         "PIR    : " +
         pirState +
         "\n";
+
 
       msg +=
         "LDR    : " +
@@ -290,23 +366,28 @@ void handleNewMessages(int numNewMessages) {
         ldrState +
         ")\n";
 
+
       msg +=
         "ACTIVITY SCORE: " +
         String(activityScore) +
         "/10 (5m window)";
 
+
       sendTelegram(msg);
     }
+
 
     // ======================================
     // /time
     // ======================================
+
     else if (text == "/time") {
 
       String modeStr =
         (currentMode == VACATION)
         ? "VACATION"
         : "ENERGY SAVER";
+
 
       String msg = getMsg(
 
@@ -326,20 +407,26 @@ void handleNewMessages(int numNewMessages) {
         modeStr
       );
 
+
       sendTelegram(msg);
     }
+
 
     // ======================================
     // /energy
     // ======================================
+
     else if (text == "/energy") {
 
-      currentMode = ENERGY_SAVER;
+      currentMode =
+        ENERGY_SAVER;
+
 
       preferences.putUInt(
         "mode",
         ENERGY_SAVER
       );
+
 
       sendTelegram(getMsg(
 
@@ -351,17 +438,22 @@ void handleNewMessages(int numNewMessages) {
       ));
     }
 
+
     // ======================================
     // /vacation
     // ======================================
+
     else if (text == "/vacation") {
 
-      currentMode = VACATION;
+      currentMode =
+        VACATION;
+
 
       preferences.putUInt(
         "mode",
         VACATION
       );
+
 
       sendTelegram(getMsg(
 
@@ -373,13 +465,16 @@ void handleNewMessages(int numNewMessages) {
       ));
     }
 
+
     // ======================================
     // /lang
     // ======================================
+
     else if (text == "/lang") {
 
       String keyboardJson =
         "[[\"English\", \"Hindi\", \"Punjabi\"]]";
+
 
       bot.sendMessageWithReplyKeyboard(
         TELEGRAM_CHAT_ID,
@@ -390,51 +485,66 @@ void handleNewMessages(int numNewMessages) {
       );
     }
 
+
     // ======================================
-    // LANGUAGE: ENGLISH
+    // ENGLISH
     // ======================================
+
     else if (text == "English") {
 
-      currentLanguage = "EN";
+      currentLanguage =
+        "EN";
+
 
       preferences.putString(
         "lang",
         "EN"
       );
 
+
       sendTelegram(
         "Language updated to English."
       );
     }
 
+
     // ======================================
-    // LANGUAGE: HINDI
+    // HINDI
     // ======================================
+
     else if (text == "Hindi") {
 
-      currentLanguage = "HI";
+      currentLanguage =
+        "HI";
+
 
       preferences.putString(
         "lang",
         "HI"
       );
 
+
       sendTelegram(
         "Bhasha badal kar Hindi kar di gayi hai."
       );
     }
 
+
     // ======================================
-    // LANGUAGE: PUNJABI
+    // PUNJABI
     // ======================================
+
     else if (text == "Punjabi") {
 
-      currentLanguage = "PA";
+      currentLanguage =
+        "PA";
+
 
       preferences.putString(
         "lang",
         "PA"
       );
+
 
       sendTelegram(
         "Bhasha badal ke Punjabi kar ditti gayi hai."
@@ -443,47 +553,58 @@ void handleNewMessages(int numNewMessages) {
   }
 }
 
+
 // ==========================================
-// 7. SETUP ROUTINE
+// 9. SETUP
 // ==========================================
+
 void setup() {
 
   Serial.begin(115200);
+
 
   Serial.println(
     "\n[BOOT] Initializing WatchPod Core..."
   );
 
-  // ======================================
-  // HARDWARE
-  // ======================================
+
+  // ----------------------------------------
+  // Hardware
+  // ----------------------------------------
+
   pinMode(
     PIR_PIN,
     INPUT
   );
+
 
   pinMode(
     LDR_PIN,
     INPUT
   );
 
+
   pinMode(
     LED_PIN,
     OUTPUT
   );
+
 
   digitalWrite(
     LED_PIN,
     LOW
   );
 
-  // ======================================
-  // LOAD NVS CONFIGURATION
-  // ======================================
+
+  // ----------------------------------------
+  // Preferences
+  // ----------------------------------------
+
   preferences.begin(
     "watchpod",
     false
   );
+
 
   currentMode =
     (SystemMode)preferences.getUInt(
@@ -491,19 +612,23 @@ void setup() {
       ENERGY_SAVER
     );
 
+
   currentLanguage =
     preferences.getString(
       "lang",
       "EN"
     );
 
+
   Serial.println(
     "[NVS] Loaded saved configurations:"
   );
 
+
   Serial.print(
     " - Mode: "
   );
+
 
   Serial.println(
     (currentMode == VACATION)
@@ -511,35 +636,46 @@ void setup() {
     : "ENERGY_SAVER"
   );
 
+
   Serial.print(
     " - Language: "
   );
+
 
   Serial.println(
     currentLanguage
   );
 
-  // ======================================
-  // WIFI
-  // ======================================
-  WiFi.mode(WIFI_STA);
+
+  // ----------------------------------------
+  // Wi-Fi
+  // ----------------------------------------
+
+  WiFi.mode(
+    WIFI_STA
+  );
+
 
   WiFi.begin(
     WIFI_SSID,
     WIFI_PASSWORD
   );
 
+
   client.setCACert(
     TELEGRAM_CERTIFICATE_ROOT
   );
+
 
   Serial.print(
     "[WIFI] Connecting to "
   );
 
+
   Serial.println(
     WIFI_SSID
   );
+
 
   while (
     WiFi.status() != WL_CONNECTED
@@ -550,44 +686,55 @@ void setup() {
       !digitalRead(LED_PIN)
     );
 
+
     delay(500);
+
 
     Serial.print(".");
   }
+
 
   digitalWrite(
     LED_PIN,
     LOW
   );
 
+
   Serial.println(
     "\n[WIFI] Connected successfully!"
   );
+
 
   Serial.print(
     "[WIFI] IP Address: "
   );
 
+
   Serial.println(
     WiFi.localIP()
   );
 
-  // ======================================
+
+  // ----------------------------------------
   // NTP / IST
-  // ======================================
+  // ----------------------------------------
+
   configTime(
     19800,
     0,
     "pool.ntp.org"
   );
 
+
   Serial.println(
     "[NTP] Syncing network time..."
   );
 
-  // ======================================
-  // TELEGRAM STARTUP MESSAGE
-  // ======================================
+
+  // ----------------------------------------
+  // Telegram startup message
+  // ----------------------------------------
+
   sendTelegram(getMsg(
 
     "WatchPod Online & Synced.",
@@ -598,26 +745,35 @@ void setup() {
   ));
 }
 
+
 // ==========================================
-// 8. MAIN EXECUTION LOOP
+// 10. MAIN LOOP
 // ==========================================
+
 void loop() {
+
 
   int pirValue =
     digitalRead(PIR_PIN);
 
+
   int ldrValue =
     analogRead(LDR_PIN);
+
 
   bool isLightOn =
     (ldrValue < LIGHT_THRESHOLD);
 
-  // ======================================
-  // MOTION VISUALIZATION
-  // ======================================
+
+  // ========================================
+  // MOTION LED
+  // ========================================
+
   if (pirValue == HIGH) {
 
-    windowPIR[windowIndex] = 1;
+    windowPIR[windowIndex] =
+      1;
+
 
     digitalWrite(
       LED_PIN,
@@ -632,10 +788,12 @@ void loop() {
     );
   }
 
-  // ======================================
+
+  // ========================================
   // 5-MINUTE SLIDING WINDOW
   // 10 × 30 SECOND SLICES
-  // ======================================
+  // ========================================
+
   if (
     millis() - lastWindowShift >
     WINDOW_INTERVAL
@@ -644,24 +802,37 @@ void loop() {
     lastWindowShift =
       millis();
 
+
     windowIndex =
       (windowIndex + 1) % 10;
 
-    windowPIR[windowIndex] = 0;
+
+    windowPIR[windowIndex] =
+      0;
+
 
     updateActivityScore();
   }
 
-  // ======================================
+
+  // ========================================
   // VACATION SECURITY MODE
-  // ======================================
+  // ========================================
+
   if (currentMode == VACATION) {
 
-    if (pirValue == HIGH) {
+
+    if (
+      pirValue == HIGH &&
+      millis() - lastVacationAlert >=
+      VACATION_ALERT_COOLDOWN
+    ) {
+
 
       Serial.println(
         "[ALERT] Intrusion detected in Vacation Mode!"
       );
+
 
       sendTelegram(getMsg(
 
@@ -672,46 +843,63 @@ void loop() {
         "[SECURITY ALERT] Vacation Mode vich halchal detect hoyi!"
       ));
 
-      delay(5000);
+
+      lastVacationAlert =
+        millis();
     }
   }
 
-  // ======================================
+
+  // ========================================
   // ENERGY SAVER MODE
-  // ======================================
+  // ========================================
+
   else {
+
 
     if (
       activityScore == 0 &&
       isLightOn
     ) {
 
+
+      // ------------------------------------
       // Start empty-room timer
-      if (emptyRoomSince == 0) {
+      // ------------------------------------
+
+      if (
+        emptyRoomSince == 0
+      ) {
 
         emptyRoomSince =
           millis();
+
 
         Serial.println(
           "[TIMER] Room empty with lights ON. Tracking timer started."
         );
       }
 
+
       unsigned long emptyDuration =
         millis() - emptyRoomSince;
 
-      // ==================================
+
+      // ------------------------------------
       // 2-MINUTE SOFT REMINDER
-      // ==================================
+      // ------------------------------------
+
       if (
         emptyDuration >
         SOFT_ALERT_TIME &&
         !softAlertSent
       ) {
 
+
         Serial.println(
           "[ALERT] Sending 2-min Soft Reminder."
         );
+
 
         sendTelegram(getMsg(
 
@@ -722,21 +910,27 @@ void loop() {
           "[REMINDER] Kamre vich koi nahi hai, par light ON hai."
         ));
 
-        softAlertSent = true;
+
+        softAlertSent =
+          true;
       }
 
-      // ==================================
+
+      // ------------------------------------
       // 10-MINUTE HARD ALERT
-      // ==================================
+      // ------------------------------------
+
       if (
         emptyDuration >
         HARD_ALERT_TIME &&
         !hardAlertSent
       ) {
 
+
         Serial.println(
           "[ALERT] Sending 10-min Strong Alert."
         );
+
 
         sendTelegram(getMsg(
 
@@ -744,57 +938,77 @@ void loop() {
 
           "[ALERT] Khali kamre mein pichle 10 minute se light ON hai!",
 
-          "[ALERT] Khali kamre vich pichle 10 minute ton light ON hai!"
+          "[ALERT] Khali kamre vich pichle 10 minute ton light ON hai."
         ));
 
-        hardAlertSent = true;
+
+        hardAlertSent =
+          true;
       }
     }
 
-    // ==================================
-    // RESET EMPTY-ROOM TRACKING
-    // ==================================
+
+    // --------------------------------------
+    // Reset empty-room tracking
+    // --------------------------------------
+
     else {
 
-      if (emptyRoomSince != 0) {
+
+      if (
+        emptyRoomSince != 0
+      ) {
 
         Serial.println(
           "[STATE] Resetting empty room timer."
         );
       }
 
-      emptyRoomSince = 0;
 
-      softAlertSent = false;
+      emptyRoomSince =
+        0;
 
-      hardAlertSent = false;
+
+      softAlertSent =
+        false;
+
+
+      hardAlertSent =
+        false;
     }
   }
 
-  // ======================================
+
+  // ========================================
   // TELEGRAM POLLING
-  // ======================================
+  // ========================================
+
   if (
     millis() - lastBotScan >
     BOT_MTBS
   ) {
+
 
     int numNewMessages =
       bot.getUpdates(
         bot.last_message_received + 1
       );
 
+
     while (numNewMessages) {
+
 
       handleNewMessages(
         numNewMessages
       );
+
 
       numNewMessages =
         bot.getUpdates(
           bot.last_message_received + 1
         );
     }
+
 
     lastBotScan =
       millis();
