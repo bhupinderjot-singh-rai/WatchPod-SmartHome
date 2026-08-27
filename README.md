@@ -1,57 +1,375 @@
-# 🛡️ WatchPod v1.0 : Smart Home Energy & Security Assistant
+# 🛡️ WatchPod v1.2 : Smart Home Energy & Security Assistant
 
-WatchPod is a custom-built, modular, local-first IoT smart home node developed entirely from scratch. Its primary objective is to intelligently analyze room occupancy and lighting context to prevent energy waste, while acting as a hardcore 24/7 intrusion detection system when the house is empty.
+WatchPod is a custom-built, modular, local-first IoT smart home node developed entirely from scratch. Its primary objective is to intelligently analyze room occupancy and lighting context to prevent energy waste, while acting as a 24/7 intrusion detection system when the house is empty.
 
 **Developed by:** Bhupinderjot Singh Rai  
-**Development Stack:** ESP32 (C++) | Mobile-first compilation via ArduinoDroid  
+**Current Release:** WatchPod v1.2  
+**Development Stack:** ESP32 (C++) | Mobile-first development via ArduinoDroid
 
 ---
 
 ## 🌟 Why WatchPod?
-Most commercial and DIY PIR sensors are naive: they rely on simple timeouts, causing false "empty room" triggers when you are reading or sleeping, and annoying security alerts when you get up for water at night. WatchPod fixes this by acting as an **Energy-Aware Occupancy Assistant** designed specifically for real-world household dynamics.
+
+Most basic PIR-based systems rely on simple motion timeouts. This can create false "empty room" situations when a person is resting, reading, or temporarily inactive.
+
+WatchPod approaches the problem differently by combining motion activity with lighting context.
+
+It acts as an **Energy-Aware Occupancy Assistant** for everyday household use, while providing a dedicated **Vacation Security Mode** when the house is empty.
+
+---
 
 ## ⚙️ Core Features
 
-*   **🧠 Smart Activity Score (Sliding Window Algorithm):** 
-    Instead of a binary motion timeout, WatchPod tracks triggers over a 5-minute sliding window to generate an `Activity Score (0-10)`. This acts as an advanced software debounce—low scores imply a resting user (sleeping/reading), actively suppressing false "lights off" alerts.
-*   **🌿 Energy Saver Mode (Default):** 
-    Continuously monitors context. Employs a graduated alert system if a room is empty and lights are left ON (2-min Soft Warning → 10-min Strong Reminder).
-*   **🚨 Vacation Mode (Manual Security):** 
-    24/7 hardcore intrusion monitoring. Triggered manually only when the house is empty, eliminating night-time false alarms.
-*   **🔐 Bulletproof Telegram Security:** 
-    Direct integration with the Telegram Bot API. Features **Chat ID Whitelisting** at the code level—if anyone else discovers the Bot Token, WatchPod actively rejects their commands with an "Unauthorized access" prompt.
-*   **💾 Power-Cut Resilience:** 
-    Utilizes ESP32's Non-Volatile Storage (NVS). If a power outage occurs, WatchPod remembers its last active mode and seamlessly resumes duty upon reboot.
-*   **🌍 Multi-Language Interface:** 
-    Full Telegram UI support in English, Hindi, and Punjabi.
+### 🧠 Smart Activity Score
+
+Instead of relying on a single motion event, WatchPod tracks PIR activity through a **5-minute sliding window** divided into 10 × 30-second intervals.
+
+This produces an **Activity Score (0–10)** that represents recent room activity.
+
+Low activity can indicate a resting or temporarily inactive user, helping reduce unnecessary energy alerts.
+
+---
+
+### 🌿 Energy Saver Mode
+
+**Default operating mode.**
+
+WatchPod continuously evaluates:
+
+- Recent room activity
+- PIR motion state
+- LDR light state
+- How long the room has remained inactive
+
+When the room appears empty while the light remains ON, WatchPod uses a graduated alert system:
+
+**2-minute Soft Warning → 10-minute Strong Alert**
+
+---
+
+### 🚨 Vacation Security Mode
+
+Manual security mode designed for situations when the house is empty.
+
+When Vacation Mode is active, PIR motion can trigger a Telegram security alert.
+
+A cooldown mechanism helps prevent repeated alerts from continuously firing during the same event.
+
+---
+
+### 📡 Wi-Fi Recovery
+
+WatchPod includes automatic Wi-Fi reconnection handling.
+
+If the Wi-Fi connection is lost, WatchPod continues running its local sensing logic and periodically attempts to reconnect.
+
+---
+
+### 📱 Telegram Control
+
+WatchPod integrates with the Telegram Bot API for remote monitoring and control.
+
+The Telegram interface provides:
+
+- Live system status
+- Energy Saver control
+- Vacation Security control
+- Time information
+- Language selection
+- Security alerts
+- Energy-saving alerts
+
+---
+
+### 🔐 Telegram Access Control
+
+WatchPod uses **Chat ID Whitelisting**.
+
+Only the configured Telegram Chat ID is authorized to control the device.
+
+Unauthorized Chat IDs are rejected.
+
+> Never publish your Telegram Bot Token, Wi-Fi password, or private `config.h` file.
+
+---
+
+### 💾 Power-Cut Resilience
+
+WatchPod uses the ESP32's **Non-Volatile Storage (NVS)** to retain important settings.
+
+The device can remember:
+
+- Active operating mode
+- Selected interface language
+
+This allows the system to restore its saved configuration after a restart or power interruption.
+
+---
+
+### 🌍 Multi-Language Interface
+
+Telegram interface supports:
+
+- 🇬🇧 English
+- 🇮🇳 Hindi
+- ਪੰਜਾਬੀ Punjabi
+
+Language selection is available through `/lang`.
+
+---
+
+## 🆕 What's New in v1.2
+
+WatchPod v1.2 focuses on improving reliability and making the Telegram monitoring experience more useful while preserving the core v1.1 functionality.
+
+### v1.2 improvements
+
+- 📡 Automatic Wi-Fi reconnection
+- 🔄 Improved network recovery handling
+- 📱 Improved Telegram status information
+- 🚨 Improved Vacation Security alerts
+- 💡 Improved Energy Saver alerts
+- 🧠 Existing 5-minute Activity Score preserved
+- 💾 NVS configuration persistence preserved
+- 🌍 English / Hindi / Punjabi support preserved
+- 🔐 Telegram Chat ID authorization preserved
+- 💡 PIR activity LED indication
+- 🧪 Tested on real ESP32 hardware
+
+**Current status: 🟢 Stable / Working Prototype**
+
+---
+
+## 🔌 Hardware & Pinout
+
+| Component | Connection |
+|---|---|
+| ESP32 | Main controller |
+| HC-SR501 PIR OUT | GPIO 32 |
+| HC-SR501 PIR VCC | 5V |
+| HC-SR501 PIR GND | GND |
+| LDR Analog Output | GPIO 34 (ADC) |
+| LDR VCC | 3.3V |
+| LDR GND | GND |
+| LED (+) | GPIO 15 through 220Ω resistor |
+| LED (−) | GND |
+
+### Hardware Notes
+
+- PIR sensor is used for motion/activity detection.
+- LDR is used for light-state monitoring.
+- LED provides local activity indication.
+- All components share a common ground.
+- Use an appropriate resistor with the LED.
 
 ---
 
 ## 🛠️ Bill of Materials (BOM)
-All components are standard, low-cost DIY electronics (easily sourced from platforms like Robu.in or local electronics markets):
-*   **Microcontroller:** ESP32 Development Board (WiFi enabled)
-*   **Motion Sensor:** HC-SR501 PIR Sensor
-*   **Light Sensor:** Analog LDR Module
-*   **Visual Feedback:** 5mm LED with a 220Ω resistor
-*   **Misc:** Breadboard, Jumper Wires, Micro-USB for power
-*   **Current Enclosure:** Upcycled cardboard prototype (Alpha Build)
+
+All components are standard, low-cost DIY electronics.
+
+- **Microcontroller:** ESP32 Development Board (Wi-Fi enabled)
+- **Motion Sensor:** HC-SR501 PIR Sensor
+- **Light Sensor:** Analog LDR Module
+- **Visual Feedback:** 5mm LED with a 220Ω resistor
+- **Misc:** Breadboard, Jumper Wires, Micro-USB cable
+- **Current Enclosure:** Upcycled cardboard prototype (Alpha Build)
+
+---
+
+## 📐 Circuit Diagram
+
+The circuit diagram documents the current WatchPod hardware connections.
+
+> Circuit diagram will be added to the repository documentation.
+
+---
+
+## 🧠 System Logic
+
+### Energy Saver Mode
+
+```text
+PIR + LDR
+   ↓
+ESP32
+   ↓
+Calculate Activity Score
+   ↓
+Is room inactive?
+   ↓
+Is light ON?
+   ↓
+Start empty-room timer
+   ↓
+2 minutes → Soft Warning
+   ↓
+10 minutes → Strong Alert
+```
+
+### Vacation Security Mode
+
+```text
+PIR Motion
+    ↓
+ESP32
+    ↓
+Vacation Mode active?
+    ↓
+YES
+    ↓
+Security Alert
+    ↓
+Telegram
+```
 
 ---
 
 ## 📲 Telegram Command Dashboard
-*   `/status` - View live sensor states, light status, and current Activity Score.
-*   `/energy` - Activate Smart Bedroom Energy Saver (Default).
-*   `/vacation` - Activate Manual Security (24/7 Vacation Mode).
-*   `/time` - View IST time sync and mode info.
-*   `/lang` - Change UI language (EN/HI/PA).
+
+| Command | Function |
+|---|---|
+| `/start` | Open WatchPod command interface |
+| `/status` | View live sensor states, light status and Activity Score |
+| `/energy` | Activate Smart Bedroom Energy Saver |
+| `/vacation` | Activate Manual Vacation Security Mode |
+| `/time` | View system time and active mode |
+| `/lang` | Change interface language |
 
 ---
 
-## 🚀 Future Roadmap (v2.0)
-While v1.0 maximizes the potential of basic sensors through software logic, future iterations will focus on hardware-level precision:
-1.  **mmWave Radar Upgrade:** Replacing/Fusing the PIR with an HLK-LD2410 mmWave sensor to detect stationary micro-movements (breathing), fully solving the "sleeping user" limitation.
-2.  **Optical LDR Baffling:** Adding a physical directional tube (light pipe) to the LDR to prevent sunlight interference and focus strictly on artificial ceiling light.
-3.  **3D Printed Enclosure:** Moving from the cardboard prototype to a sleek, wall-mountable CAD-designed chassis modeled in Onshape.
+## 🔐 Configuration
+
+The main public source code does **not** contain private credentials.
+
+Create a local `config.h` file containing:
+
+```cpp
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#define WIFI_SSID "YOUR_WIFI_NAME"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+#define TELEGRAM_BOT_TOKEN "YOUR_TELEGRAM_BOT_TOKEN"
+#define TELEGRAM_CHAT_ID "YOUR_TELEGRAM_CHAT_ID"
+
+#endif
+```
+
+### ⚠️ Security
+
+Never commit your real:
+
+- Wi-Fi password
+- Telegram Bot Token
+- Telegram Chat ID
+- `config.h`
+
+to a public repository.
+
+The project uses `.gitignore` to keep the local `config.h` outside the public source tree.
 
 ---
+
+## 📱 Development
+
+WatchPod is developed using:
+
+**ESP32 + Arduino/C++ + ArduinoDroid**
+
+The project follows a mobile-first development workflow, allowing firmware development and compilation without requiring a traditional desktop computer.
+
+---
+
+## 🧪 Testing Status
+
+WatchPod v1.2 has been:
+
+- ✅ Compiled successfully
+- ✅ Uploaded to a real ESP32
+- ✅ Connected to Wi-Fi
+- ✅ Tested with Telegram
+- ✅ Tested with PIR motion detection
+- ✅ Tested with LDR light monitoring
+- ✅ Tested with Energy Saver Mode
+- ✅ Tested with Vacation Security Mode
+- ✅ Tested with Telegram commands
+
+**Current status: Working real-hardware prototype.**
+
+---
+
+## 📂 Repository Structure
+
+```text
+WatchPod-SmartHome/
+│
+├── WatchPod_v1.2.ino
+├── config.example.h
+├── .gitignore
+├── README.md
+│
+└── docs/
+    ├── circuit-diagram.png
+    ├── system-architecture.png
+    └── flowchart.png
+```
+
+> `config.h` is intentionally excluded from the public repository.
+
+---
+
+## 🚀 Future Roadmap
+
+### v1.3 — Future Development
+
+Potential improvements will be evaluated after the v1.2 stable build.
+
+Possible areas include:
+
+- Smarter occupancy detection
+- Improved sensor calibration
+- Better environmental awareness
+- Additional Telegram functionality
+- Hardware refinements
+
+### v2.0 — Long-Term Hardware Roadmap
+
+1. **mmWave Radar Upgrade**  
+   Replacing or fusing PIR with an HLK-LD2410 mmWave sensor to detect stationary micro-movements and improve occupancy detection.
+
+2. **Optical LDR Baffling**  
+   Adding a physical directional tube/light pipe to reduce sunlight interference and focus the LDR on artificial lighting.
+
+3. **3D Printed Enclosure**  
+   Moving from the current cardboard prototype to a sleek, wall-mountable CAD-designed enclosure.
+
+---
+
+## 🔒 Privacy Philosophy
+
+WatchPod is designed around a **local-first approach**.
+
+The device uses:
+
+- ESP32 local processing
+- Direct Wi-Fi connectivity
+- Telegram for remote notifications
+- No mandatory cloud subscription
+- No camera
+- No continuous audio recording
+
+---
+
+## 🏆 Project Status
+
+**WatchPod v1.2 — Stable Working Prototype**
+
+The system has progressed from a software concept to a functional ESP32-based real-hardware prototype.
+
+Future development will focus on improving sensing accuracy, reliability, hardware design, and usability without compromising the project's privacy-first approach.
+
+---
+
 *Built for smarter homes. Zero cloud subscriptions. 100% Privacy.*
