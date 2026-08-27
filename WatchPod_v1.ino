@@ -1,6 +1,6 @@
 /*
 ====================================================
-                 WATCHPOD v1.0
+                 WATCHPOD v1.2
           SMART BEDROOM/HOME FINAL VERSION
 
             * Default: Energy Saver
@@ -34,8 +34,9 @@ Commands:
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
-
 #include "config.h"
+
+
 
 
 // ==========================================
@@ -100,6 +101,9 @@ unsigned long emptyRoomSince = 0;
 
 unsigned long lastWifiRetry = 0;
 const unsigned long WIFI_RETRY_INTERVAL = 30000;
+
+bool wasWifiConnected = false;
+
 // Energy Saver alert states
 bool softAlertSent = false;
 
@@ -124,17 +128,61 @@ UniversalTelegramBot bot(
 
 void maintainWiFi() {
 
-  if (WiFi.status() == WL_CONNECTED) {
+  bool wifiConnected =
+    (WiFi.status() == WL_CONNECTED);
+
+
+  // ----------------------------------------
+  // Detect Wi-Fi reconnection
+  // ----------------------------------------
+
+  if (wifiConnected && !wasWifiConnected) {
+
+    Serial.println(
+      "[WIFI] Connection restored."
+    );
+
+    // Reset secure client state so the next
+    // Telegram request starts cleanly.
+    client.stop();
+
+    // Refresh network time after reconnect.
+    configTime(
+      19800,
+      0,
+      "pool.ntp.org"
+    );
+
+    lastBotScan = millis();
+  }
+
+
+  wasWifiConnected =
+    wifiConnected;
+
+
+  if (wifiConnected) {
     return;
   }
 
-  if (millis() - lastWifiRetry >= WIFI_RETRY_INTERVAL) {
 
-    lastWifiRetry = millis();
+  // ----------------------------------------
+  // Retry every 30 seconds
+  // ----------------------------------------
+
+  if (
+    millis() - lastWifiRetry >=
+    WIFI_RETRY_INTERVAL
+  ) {
+
+    lastWifiRetry =
+      millis();
 
     Serial.println(
       "[WIFI] Connection lost. Retrying..."
     );
+
+    WiFi.disconnect();
 
     WiFi.begin(
       WIFI_SSID,
@@ -183,6 +231,15 @@ String getMsg(
 // ------------------------------------------
 
 void sendTelegram(String message) {
+
+  if (WiFi.status() != WL_CONNECTED) {
+
+    Serial.println(
+      "[TELEGRAM] Wi-Fi unavailable. Message skipped."
+    );
+
+    return;
+  }
 
   bot.sendMessage(
     TELEGRAM_CHAT_ID,
@@ -299,7 +356,7 @@ void handleNewMessages(int numNewMessages) {
 
       String welcome = getMsg(
 
-        "Welcome to WatchPod v1.0!\n\n"
+        "Welcome to WatchPod v1.2!\n\n"
         "Commands:\n"
         "/status - Check live system status & Activity Score\n"
         "/energy - Smart Bedroom Energy Saver\n"
@@ -307,7 +364,7 @@ void handleNewMessages(int numNewMessages) {
         "/time - View current time & active mode\n"
         "/lang - Change language",
 
-        "WatchPod v1.0 mein aapka swagat hai!\n\n"
+        "WatchPod v1.2 mein aapka swagat hai!\n\n"
         "Commands:\n"
         "/status - Live status aur Activity Score\n"
         "/energy - Smart Bedroom Energy Saver\n"
@@ -315,7 +372,7 @@ void handleNewMessages(int numNewMessages) {
         "/time - Samay aur active mode\n"
         "/lang - Bhasha badlein",
 
-        "WatchPod v1.0 vich tuhada swagat hai!\n\n"
+        "WatchPod v1.2 vich tuhada swagat hai!\n\n"
         "Commands:\n"
         "/status - Live status te Activity Score\n"
         "/energy - Smart Bedroom Energy Saver\n"
@@ -366,6 +423,19 @@ void handleNewMessages(int numNewMessages) {
 
       msg +=
         "SYSTEM : ONLINE\n";
+
+      msg +=
+        "WIFI   : CONNECTED\n";
+
+      msg +=
+        "RSSI   : " +
+        String(WiFi.RSSI()) +
+        " dBm\n";
+
+      msg +=
+        "UPTIME : " +
+        String(millis() / 1000) +
+        " sec\n";
 
 
       msg +=
@@ -454,6 +524,9 @@ void handleNewMessages(int numNewMessages) {
         ENERGY_SAVER
       );
 
+      emptyRoomSince = 0;
+      softAlertSent = false;
+      hardAlertSent = false;
 
       sendTelegram(getMsg(
 
@@ -481,6 +554,10 @@ void handleNewMessages(int numNewMessages) {
         VACATION
       );
 
+      // Allow the first motion event immediately
+      // after entering Vacation Mode.
+      lastVacationAlert =
+        millis() - VACATION_ALERT_COOLDOWN;
 
       sendTelegram(getMsg(
 
@@ -862,14 +939,40 @@ void loop() {
       );
 
 
-      sendTelegram(getMsg(
+      String securityAlert = getMsg(
 
-        "[SECURITY ALERT] Motion detected in Vacation Mode!",
+        "WATCHPOD SECURITY ALERT\n\n"
+        "Motion detected!\n"
+        "Mode: VACATION\n"
+        "Time: " +
+        getFormattedTime() +
+        "\n"
+        "Activity Score: " +
+        String(activityScore) +
+        "/10",
 
-        "[SECURITY ALERT] Vacation Mode mein halchal detect hui!",
+        "WATCHPOD SECURITY ALERT\n\n"
+        "Halchal detect hui!\n"
+        "Mode: VACATION\n"
+        "Time: " +
+        getFormattedTime() +
+        "\n"
+        "Activity Score: " +
+        String(activityScore) +
+        "/10",
 
-        "[SECURITY ALERT] Vacation Mode vich halchal detect hoyi!"
-      ));
+        "WATCHPOD SECURITY ALERT\n\n"
+        "Halchal detect hoyi!\n"
+        "Mode: VACATION\n"
+        "Samaa: " +
+        getFormattedTime() +
+        "\n"
+        "Activity Score: " +
+        String(activityScore) +
+        "/10"
+      );
+
+      sendTelegram(securityAlert);
 
 
       lastVacationAlert =
@@ -929,14 +1032,43 @@ void loop() {
         );
 
 
-        sendTelegram(getMsg(
+        String energyReminder = getMsg(
 
-          "[REMINDER] Room appears unoccupied, but lights are ON.",
+          "WATCHPOD ENERGY REMINDER\n\n"
+          "Room appears unoccupied.\n"
+          "Light is ON.\n"
+          "Mode: ENERGY SAVER\n"
+          "Time: " +
+          getFormattedTime() +
+          "\n"
+          "Activity Score: " +
+          String(activityScore) +
+          "/10",
 
-          "[REMINDER] Kamre mein koi nahi hai, lekin light ON hai.",
+          "WATCHPOD ENERGY REMINDER\n\n"
+          "Kamra khali lag raha hai.\n"
+          "Light ON hai.\n"
+          "Mode: ENERGY SAVER\n"
+          "Time: " +
+          getFormattedTime() +
+          "\n"
+          "Activity Score: " +
+          String(activityScore) +
+          "/10",
 
-          "[REMINDER] Kamre vich koi nahi hai, par light ON hai."
-        ));
+          "WATCHPOD ENERGY REMINDER\n\n"
+          "Kamra khali lagda hai.\n"
+          "Light ON hai.\n"
+          "Mode: ENERGY SAVER\n"
+          "Samaa: " +
+          getFormattedTime() +
+          "\n"
+          "Activity Score: " +
+          String(activityScore) +
+          "/10"
+        );
+
+        sendTelegram(energyReminder);
 
 
         softAlertSent =
@@ -960,14 +1092,40 @@ void loop() {
         );
 
 
-        sendTelegram(getMsg(
+        String energyAlert = getMsg(
 
-          "[ALERT] Lights have been ON in an empty room for over 10 minutes!",
+          "WATCHPOD ENERGY ALERT\n\n"
+          "Lights have been ON in an empty room for over 10 minutes.\n"
+          "Mode: ENERGY SAVER\n"
+          "Time: " +
+          getFormattedTime() +
+          "\n"
+          "Activity Score: " +
+          String(activityScore) +
+          "/10",
 
-          "[ALERT] Khali kamre mein pichle 10 minute se light ON hai!",
+          "WATCHPOD ENERGY ALERT\n\n"
+          "Khali kamre mein 10 minute se light ON hai.\n"
+          "Mode: ENERGY SAVER\n"
+          "Time: " +
+          getFormattedTime() +
+          "\n"
+          "Activity Score: " +
+          String(activityScore) +
+          "/10",
 
-          "[ALERT] Khali kamre vich pichle 10 minute ton light ON hai."
-        ));
+          "WATCHPOD ENERGY ALERT\n\n"
+          "Khali kamre vich 10 minute ton light ON hai.\n"
+          "Mode: ENERGY SAVER\n"
+          "Samaa: " +
+          getFormattedTime() +
+          "\n"
+          "Activity Score: " +
+          String(activityScore) +
+          "/10"
+        );
+
+        sendTelegram(energyAlert);
 
 
         hardAlertSent =
@@ -1042,3 +1200,4 @@ void loop() {
       millis();
   }
 }
+
