@@ -1,9 +1,9 @@
-# 🛡️ WatchPod v1.2 : Smart Home Energy & Security Assistant
+# 🛡️ WatchPod v1.3 : Smart Home Energy & Security Assistant
 
 WatchPod is a custom-built, modular, local-first IoT smart home node developed entirely from scratch. Its primary objective is to intelligently analyze room occupancy and lighting context to prevent energy waste, while acting as a 24/7 intrusion detection system when the house is empty.
 
 **Developed by:** Bhupinderjot Singh Rai  
-**Current Release:** WatchPod v1.2  
+**Current Release:** WatchPod v1.3  
 **Development Stack:** ESP32 (C++) | Mobile-first development via ArduinoDroid
 
 ---
@@ -87,7 +87,7 @@ WatchPod uses **Chat ID Whitelisting**.
 
 Only the configured Telegram Chat ID is authorized to control the device.
 
-Unauthorized Chat IDs are rejected.
+Unauthorized Chat IDs are silently ignored.
 
 > Never publish your Telegram Bot Token, Wi-Fi password, or private `config.h` file.
 
@@ -137,6 +137,33 @@ WatchPod v1.2 focuses on improving reliability and making the Telegram monitorin
 - 🧪 Tested on real ESP32 hardware
 
 **Current status: 🟢 Stable / Working Prototype**
+
+---
+
+## 🆕 What's New in v1.3
+
+WatchPod v1.3 focuses on reliability, observability, and practical sensor calibration while keeping the project bounded and hardware-focused.
+
+### v1.3 improvements
+
+- 🧪 `/calibrate` command for LDR ambient-light calibration
+- 💾 Calibrated LDR baseline stored in ESP32 NVS
+- 📡 Wi-Fi RSSI added to `/status`
+- 🧠 Live Activity Score shown in `/status`
+- 💾 Free heap memory shown in `/status`
+- 🔄 Telegram duplicate-update protection
+- 🔔 Telegram reboot notification with the NVS-restored operating mode
+- 🛡️ Unauthorized Telegram users are silently ignored
+- 🐕 Hardware watchdog for automatic recovery from a stalled main loop
+- 📡 Existing automatic Wi-Fi reconnection preserved
+- 🌍 Existing English / Hindi / Punjabi support preserved
+- 💡 Existing PIR activity LED indication preserved
+
+### v1.3 power-management scope
+
+WatchPod v1.3 does **not** include Deep Sleep, Low Power mode, `/lowpower`, or `/normalpower`.
+
+The device remains remotely controllable through Telegram during normal operation.
 
 ---
 
@@ -230,31 +257,27 @@ Telegram
 | Command | Function |
 |---|---|
 | `/start` | Open WatchPod command interface |
-| `/status` | View live sensor states, light status and Activity Score |
+| `/status` | View live system status, Wi-Fi RSSI, free heap, sensor states and Activity Score |
 | `/energy` | Activate Smart Bedroom Energy Saver |
 | `/vacation` | Activate Manual Vacation Security Mode |
 | `/time` | View system time and active mode |
 | `/lang` | Change interface language |
+| `/calibrate` | Calibrate the LDR using the current ambient light level |
 
 ---
 
 ## 🔐 Configuration
 
-The main public source code does **not** contain private credentials.
+The public `WatchPod_v1.3.ino` source uses placeholders for private credentials.
 
-Create a local `config.h` file containing:
+Before uploading the firmware, replace these four values locally:
 
 ```cpp
-#ifndef CONFIG_H
-#define CONFIG_H
-
 #define WIFI_SSID "YOUR_WIFI_NAME"
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 
 #define TELEGRAM_BOT_TOKEN "YOUR_TELEGRAM_BOT_TOKEN"
 #define TELEGRAM_CHAT_ID "YOUR_TELEGRAM_CHAT_ID"
-
-#endif
 ```
 
 ### ⚠️ Security
@@ -264,11 +287,10 @@ Never commit your real:
 - Wi-Fi password
 - Telegram Bot Token
 - Telegram Chat ID
-- `config.h`
 
 to a public repository.
 
-The project uses `.gitignore` to keep the local `config.h` outside the public source tree.
+Keep your personal credentials only in your local working copy.
 
 ---
 
@@ -284,7 +306,7 @@ The project follows a mobile-first development workflow, allowing firmware devel
 
 ## 🧪 Testing Status
 
-WatchPod v1.2 has been:
+WatchPod v1.3 has been:
 
 - ✅ Compiled successfully
 - ✅ Uploaded to a real ESP32
@@ -295,6 +317,9 @@ WatchPod v1.2 has been:
 - ✅ Tested with Energy Saver Mode
 - ✅ Tested with Vacation Security Mode
 - ✅ Tested with Telegram commands
+- ✅ Tested with LDR calibration
+- ✅ Tested with persistent NVS settings
+- ✅ Tested with v1.3 Telegram control
 
 **Current status: Working real-hardware prototype.**
 
@@ -305,8 +330,7 @@ WatchPod v1.2 has been:
 ```text
 WatchPod-SmartHome/
 │
-├── WatchPod_v1.2.ino
-├── config.example.h
+├── WatchPod_v1.3.ino
 ├── .gitignore
 ├── README.md
 │
@@ -316,23 +340,22 @@ WatchPod-SmartHome/
     └── flowchart.png
 ```
 
-> `config.h` is intentionally excluded from the public repository.
+> Private credentials are intentionally excluded from the public repository.
 
 ---
 
 ## 🚀 Future Roadmap
 
-### v1.3 — Future Development
+### v1.4+ — Future Development
 
-Potential improvements will be evaluated after the v1.2 stable build.
+Future improvements will be evaluated only after the v1.3 stable build.
 
 Possible areas include:
 
 - Smarter occupancy detection
-- Improved sensor calibration
 - Better environmental awareness
-- Additional Telegram functionality
 - Hardware refinements
+- Additional sensing capabilities
 
 ### v2.0 — Long-Term Hardware Roadmap
 
@@ -364,12 +387,13 @@ The device uses:
 
 ## 🏆 Project Status
 
-**WatchPod v1.2 — Stable Working Prototype**
+**WatchPod v1.3 — Stable Working Prototype**
 
-The system has progressed from a software concept to a functional ESP32-based real-hardware prototype.
+The system has progressed from a software concept to a functional ESP32-based real-hardware prototype with persistent configuration, calibration, remote monitoring, and automatic recovery.
 
 Future development will focus on improving sensing accuracy, reliability, hardware design, and usability without compromising the project's privacy-first approach.
 
 ---
 
 *Built for smarter homes. Zero cloud subscriptions. 100% Privacy.*
+
